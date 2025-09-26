@@ -29,7 +29,7 @@ REQUEST_INTERVAL_HOURS = 2
 # ==========================
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(_name_)
 
 # Track subscribed chats
 registered_chats: set[int] = set()

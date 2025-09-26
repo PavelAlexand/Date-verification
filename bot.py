@@ -44,17 +44,21 @@ def ocr_image_to_text(img_bytes: bytes) -> str:
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    # Усиление контраста
+    # Усиление контраста + фильтрация
     gray = cv2.equalizeHist(gray)
+    gray = cv2.GaussianBlur(gray, (3, 3), 0)
 
-    # Инверсия (для светлой лазерной печати)
-    gray = cv2.bitwise_not(gray)
+    # Адаптивная бинаризация
+    th = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY, 11, 2
+    )
 
-    # Бинаризация (Otsu)
-    _, th = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # Масштабирование ×3
+    th = cv2.resize(th, (th.shape[1]*3, th.shape[0]*3))
 
-    # OCR только для цифр, точек и дефисов
-    custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789./-'
+    # OCR с ограничением на цифры и символы даты
+    custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789:./-'
     text = pytesseract.image_to_string(th, config=custom_config)
 
     return text

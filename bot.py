@@ -50,9 +50,6 @@ def ocr_image_to_text(img_bytes: bytes) -> str:
     # Инверсия (для светлой лазерной печати)
     gray = cv2.bitwise_not(gray)
 
-    # Масштабирование ×3
-    gray = cv2.resize(gray, (gray.shape[1]*3, gray.shape[0]*3))
-
     # Бинаризация (Otsu)
     _, th = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
@@ -91,20 +88,24 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         text = ocr_image_to_text(img_bytes)
         logger.info("OCR result: %s", text)  # логируем распознанный текст
-        found_date = extract_date_from_text(text)
+        found_date =
+        extract_date_from_text(text)
     except Exception as e:
         logger.exception("OCR error: %s", e)
         await update.message.reply_text("⚠️ Ошибка при распознавании. Попробуйте другое фото.")
         return
 
     today = datetime.now(TZ).date()
-    if found_date == today:
-        await update.message.reply_text(f"✅ Дата совпадает: {found_date.isoformat()}")
-    elif found_date is None:
-        await update.message.reply_text("⚠️ Не удалось распознать дату. Сделайте фото крупнее и без бликов.")
-    else:
-        await update.message.reply_text(f"❌ Дата НЕ совпадает. Найдено: {found_date}, сегодня: {today}")
 
+if not found_dates:
+    await update.message.reply_text("⚠️ Не удалось распознать дату. Сделайте фото крупнее и без бликов.")
+else:
+    dates_str = ", ".join([d.isoformat() for d in found_dates])
+    if today in found_dates:
+        await update.message.reply_text(f"✅ Найдены даты: {dates_str}\nСегодня: {today} (совпадает)")
+    else:
+        await update.message.reply_text(f"❌ Найдены даты: {dates_str}\nСегодня: {today} (совпадений нет)")
+        
 # ======= HTTP-заглушка для Render =======
 async def handle_root(request):
     return web.Response(text="OK")

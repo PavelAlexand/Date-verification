@@ -30,7 +30,7 @@ YANDEX_URL = "https://vision.api.cloud.yandex.net/vision/v1/batchAnalyze"
 DATE_REGEX = r"(\d{2}[.\-/]\d{2}[.\-/]\d{2,4})|(\d{6})"
 
 # -----------------------------
-# Функция OCR через Yandex API
+# OCR через Yandex Vision API
 # -----------------------------
 async def yandex_ocr(img_bytes: bytes) -> str:
     img_b64 = base64.b64encode(img_bytes).decode()
@@ -94,16 +94,23 @@ async def start_cmd(msg: types.Message):
 @dp.message_handler(content_types=["photo"])
 async def photo_handler(msg: types.Message):
     photo = msg.photo[-1]
+
+    # ✅ Фикс: скачиваем файл через bot.get_file и bot.download_file
+    file = await bot.get_file(photo.file_id)
     bio = io.BytesIO()
-    await photo.download(destination=bio)
+    await bot.download_file(file.file_path, destination=bio)
+
+    # OCR
     text = await yandex_ocr(bio.getvalue())
     if not text:
         await msg.answer("❌ Не удалось распознать текст.")
         return
+
     dt = parse_date(text)
     if not dt:
         await msg.answer(f"Текст: <code>{text}</code>\nДата не найдена.")
         return
+
     await msg.answer(compare_with_today(dt))
 
 # -----------------------------

@@ -1,21 +1,27 @@
 import io
 import re
 import base64
-import httpx
 import os
 from datetime import datetime
-import pytz
 
+import httpx
+import pytz
 from fastapi import FastAPI, Request, HTTPException
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 
+# -----------------------------
+# Переменные окружения (Render)
+# -----------------------------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 YANDEX_API_KEY = os.getenv("YANDEX_API_KEY")
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "secret")
 BASE_URL = os.getenv("BASE_URL")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "secret")
 TZ = os.getenv("TZ", "Europe/Moscow")
 
+# -----------------------------
+# Инициализация бота и FastAPI
+# -----------------------------
 bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
 dp = Dispatcher(bot, storage=MemoryStorage())
 app = FastAPI()
@@ -23,6 +29,9 @@ app = FastAPI()
 YANDEX_URL = "https://vision.api.cloud.yandex.net/vision/v1/batchAnalyze"
 DATE_REGEX = r"(\d{2}[.\-/]\d{2}[.\-/]\d{2,4})|(\d{6})"
 
+# -----------------------------
+# Функция OCR через Yandex API
+# -----------------------------
 async def yandex_ocr(img_bytes: bytes) -> str:
     img_b64 = base64.b64encode(img_bytes).decode()
     payload = {
@@ -46,6 +55,9 @@ async def yandex_ocr(img_bytes: bytes) -> str:
         return ""
     return " ".join(texts)
 
+# -----------------------------
+# Парсинг даты
+# -----------------------------
 def parse_date(text: str):
     match = re.search(DATE_REGEX, text)
     if not match:
@@ -54,7 +66,7 @@ def parse_date(text: str):
     try:
         if len(raw) == 6:  # YYMMDD
             return datetime.strptime(raw, "%y%m%d")
-        elif len(raw.split(".")) == 3:
+        elif "." in raw:
             return datetime.strptime(raw, "%d.%m.%y")
     except Exception:
         try:
@@ -72,9 +84,12 @@ def compare_with_today(dt: datetime):
     else:
         return f"📅 {dt.date()} — осталось <b>{diff}</b> дн."
 
+# -----------------------------
+# Хендлеры Telegram
+# -----------------------------
 @dp.message_handler(commands=["start"])
 async def start_cmd(msg: types.Message):
-    await msg.answer("Привет 👋 Отправь фото банки, я распознаю дату и сравню с текущей.")
+    await msg.answer("Привет 👋 Отправь фото банки, я распознаю дату и сравню её с текущей.")
 
 @dp.message_handler(content_types=["photo"])
 async def photo_handler(msg: types.Message):
@@ -91,6 +106,9 @@ async def photo_handler(msg: types.Message):
         return
     await msg.answer(compare_with_today(dt))
 
+# -----------------------------
+# Webhook FastAPI
+# -----------------------------
 @app.on_event("startup")
 async def on_startup():
     if BASE_URL:

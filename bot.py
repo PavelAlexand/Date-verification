@@ -160,7 +160,7 @@ def run_http_server():
     app = web.Application()
     app.add_routes([web.get("/", handle_root)])
     port = int(os.environ.get("PORT", 8080))
-    web.run_app(app, host="0.0.0.0", port=port)
+    web.run_app(app, host="0.0.0.0", port=port, handle_signals=False)
 
 
 # ======= Entrypoint =======

@@ -164,7 +164,7 @@ def run_http_server():
 
 
 # ======= Entrypoint =======
-if _name_ == "__main__":
+if __name__ == "__main__":
     if not TELEGRAM_TOKEN:
         raise RuntimeError("TG_BOT_TOKEN not set")
 

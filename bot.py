@@ -12,7 +12,7 @@ from aiogram.types import Update
 # 🔹 Логирование
 logging.basicConfig(level=logging.INFO)
 
-# 🔹 Переменные окружения
+# 🔹 Переменные окружения (Render → Environment Variables)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 YANDEX_API_KEY = os.getenv("YANDEX_API_KEY")
 YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID")
@@ -101,6 +101,12 @@ async def telegram_webhook(request: Request):
     update = Update(**data)
     await dp.process_update(update)
     return {"ok": True}
+
+
+# ---- Root endpoint для Render ----
+@app.get("/")
+async def root():
+    return {"status": "ok", "message": "Bot is running"}
 
 
 @app.on_event("startup")

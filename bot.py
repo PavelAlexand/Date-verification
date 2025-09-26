@@ -12,7 +12,7 @@ from aiogram.types import Update
 # 🔹 Логирование
 logging.basicConfig(level=logging.INFO)
 
-# 🔹 Переменные окружения (Render → Environment Variables)
+# 🔹 Переменные окружения
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 YANDEX_API_KEY = os.getenv("YANDEX_API_KEY")
 YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID")
@@ -31,7 +31,6 @@ app = FastAPI()
 # ---- OCR через Yandex Vision API ----
 async def yandex_ocr(image_bytes: bytes) -> str:
     url = "https://vision.api.cloud.yandex.net/vision/v1/batchAnalyze"
-
     headers = {"Authorization": f"Api-Key {YANDEX_API_KEY}"}
     body = {
         "folderId": YANDEX_FOLDER_ID,
@@ -55,7 +54,6 @@ async def yandex_ocr(image_bytes: bytes) -> str:
 
 # ---- Извлечение даты из текста ----
 def extract_date(text: str) -> str:
-    # Ищем дату в формате 01.01.2025 или 01-01-2025
     match = re.search(r"(\d{2}[.\-/]\d{2}[.\-/]\d{4})", text)
     if match:
         return match.group(1)
@@ -65,14 +63,18 @@ def extract_date(text: str) -> str:
 # ---- Хендлер фото ----
 @dp.message_handler(content_types=["photo"])
 async def photo_handler(message: types.Message):
-    from aiogram import Bot
-    Bot.set_current(bot)  # 🔹 фикс контекста
-
+    # Получаем file_id последнего фото
     photo = message.photo[-1]
-    bio = io.BytesIO()
-    await photo.download(destination=bio)
+    file = await bot.get_file(photo.file_id)
 
-    text = await yandex_ocr(bio.getvalue())
+    # Скачиваем файл напрямую
+    file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file.file_path}"
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(file_url)
+        image_bytes = resp.content
+
+    # Отправляем в OCR
+    text = await yandex_ocr(image_bytes)
 
     # Проверка даты
     date_str = extract_date(text)
@@ -103,8 +105,6 @@ async def telegram_webhook(request: Request):
 
 @app.on_event("startup")
 async def on_startup():
-    from aiogram import Bot
-    Bot.set_current(bot)  # 🔹 фикс при старте
     webhook_url = os.getenv("RENDER_EXTERNAL_URL") + "/telegram/webhook"
     await bot.set_webhook(webhook_url)
     logging.info(f"✅ Webhook установлен: {webhook_url}")

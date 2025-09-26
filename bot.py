@@ -62,3 +62,64 @@ def extract_date_from_text(text: str):
             except Exception:
                 continue
     return None
+
+# === Telegram handlers ===
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    registered_chats.add(chat_id)
+    last_status[chat_id] = {"last_checked": None, "last_result": None}
+    await update.message.reply_text("✅ Бот активен. Я буду запрашивать фото каждые 2 часа.")
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    file = await update.message.photo[-1].get_file()
+    with tempfile.NamedTemporaryFile(suffix=".jpg") as tmp:
+        await file.download_to_drive(tmp.name)
+        img_bytes = open(tmp.name, "rb").read()
+    text = ocr_image_to_text(img_bytes)
+    found_date = extract_date_from_text(text)
+    now_date = datetime.now(TZ).date()
+    if found_date == now_date:
+        await update.message.reply_text(f"✅ Дата совпадает: {found_date}")
+    else:
+        await update.message.reply_text(f"❌ Дата не совпадает. Найдена: {found_date}, сегодня: {now_date}")
+
+# === Scheduler ===
+scheduler = AsyncIOScheduler(timezone=TZ)
+async def start_scheduler(app):
+    scheduler.remove_all_jobs()
+    async def tick():
+        for chat_id in list(registered_chats):
+            await app.bot.send_message(chat_id, "⏰ Пожалуйста, пришлите фото даты.")
+    scheduler.add_job(tick, trigger=IntervalTrigger(hours=REQUEST_INTERVAL_HOURS))
+    scheduler.start()
+
+# === HTTP-заглушка для Render ===
+async def handle_root(request):
+    return web.Response(text="OK")
+
+async def run_web():
+    app = web.Application()
+    app.add_routes([web.get("/", handle_root)])
+    port = int(os.environ.get("PORT", 8080))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+
+# === Main ===
+async def main():
+    if not TELEGRAM_TOKEN:
+        raise RuntimeError("TG_BOT_TOKEN not set")
+
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    await start_scheduler(app)
+
+    # Запускаем и бота, и http-заглушку
+    await run_web()
+    await app.run_polling()
+
+if _name_ == "_main_":
+    import

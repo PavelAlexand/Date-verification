@@ -89,7 +89,7 @@ def run_http_server():
     web.run_app(app, host="0.0.0.0", port=port)
 
 # === Main ===
-if _name_ == "_main_":
+if _name_ == "__main__":
     if not TELEGRAM_TOKEN:
         raise RuntimeError("TG_BOT_TOKEN not set")
 

@@ -92,8 +92,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         text = ocr_image_to_text(img_bytes)
         logger.info("OCR result: %s", text)  # логируем распознанный текст
-        found_date =
-        extract_date_from_text(text)
+        found_dates = extract_date_from_text(text)
     except Exception as e:
         logger.exception("OCR error: %s", e)
         await update.message.reply_text("⚠️ Ошибка при распознавании. Попробуйте другое фото.")

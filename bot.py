@@ -106,5 +106,5 @@ if _name_ == "_main_":
     import threading
     threading.Thread(target=run_http_server, daemon=True).start()
 
-    # ❗ ВАЖНО: только синхронный вызов, без asyncio.run()
+    # Синхронный запуск — без asyncio.run()
     application.run_polling()

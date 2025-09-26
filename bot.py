@@ -1,141 +1,109 @@
-import os
-import logging
+import io
 import re
+import base64
+import httpx
+import os
 from datetime import datetime
-from io import BytesIO
-
 import pytz
-import cv2
-import numpy as np
-import pytesseract
-from dateutil import parser as dateparser
 
-from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
-)
+from fastapi import FastAPI, Request, HTTPException
+from aiogram import Bot, Dispatcher, types
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
 
-from aiohttp import web  # HTTP-заглушка для Render
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+YANDEX_API_KEY = os.getenv("YANDEX_API_KEY")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "secret")
+BASE_URL = os.getenv("BASE_URL")
+TZ = os.getenv("TZ", "Europe/Moscow")
 
-# ========= Конфиг =========
-TELEGRAM_TOKEN = os.getenv("TG_BOT_TOKEN")
-TZ = pytz.timezone("Europe/Berlin")
-# ==========================
+bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
+dp = Dispatcher(bot, storage=MemoryStorage())
+app = FastAPI()
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+YANDEX_URL = "https://vision.api.cloud.yandex.net/vision/v1/batchAnalyze"
+DATE_REGEX = r"(\d{2}[.\-/]\d{2}[.\-/]\d{2,4})|(\d{6})"
 
-# Регулярки для поиска дат
-DATE_REGEXES = [
-    r'(?P<d>\b[0-3]?\d[.\-/][0-1]?\d[.\-/](?:20[0-9]{2}|19[0-9]{2}|\d{2})\b)',
-    r'(?P<d>\b(?:20[0-9]{2}|19[0-9]{2})[.\-/][0-1]?\d[.\-/][0-3]?\d\b)',
-    r'(?P<d>\b[0-3]?\d[ \-\/\.](?:янв|фев|мар|апр|май|июн|июл|авг|сен|oct|окт|ноя|дек|[A-Za-z]{3,9})[ \-\/\.][0-9]{2,4}\b)',
-]
-
-# ======= OCR =======
-def ocr_image_to_text(img_bytes: bytes) -> str:
-    arr = np.frombuffer(img_bytes, np.uint8)
-    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-    # Усиление контраста
-    gray = cv2.equalizeHist(gray)
-
-    # Инверсия (если печать светлая)
-    gray = cv2.bitwise_not(gray)
-
-    # Лёгкое размытие
-    gray = cv2.GaussianBlur(gray, (3, 3), 0)
-
-    # Адаптивная бинаризация
-    th = cv2.adaptiveThreshold(
-        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY, 11, 2
-    )
-
-    # Масштабирование ×3
-    th = cv2.resize(th, (th.shape[1]*3, th.shape[0]*3))
-
-    # OCR — только цифры и символы даты
-    custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789:./-'
-    text = pytesseract.image_to_string(th, config=custom_config)
-
-    return text
-
-def extract_dates_from_text(text: str):
-    """Ищем все даты в тексте и возвращаем список"""
-    s = text.replace("\n", " ").lower()
-    results = []
-    for rx in DATE_REGEXES:
-        matches = re.findall(rx, s, flags=re.IGNORECASE)
-        for d in matches:
-            try:
-                parsed = dateparser.parse(d, dayfirst=True, fuzzy=True).date()
-                results.append(parsed)
-            except Exception:
-                continue
-    return list(set(results))  # уникальные даты
-
-# ======= Telegram handlers =======
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "✅ Бот активен. Пришлите фото даты на банке — я сравню её с сегодняшним числом."
-    )
-
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.photo:
-        return
-
-    file = await update.message.photo[-1].get_file()
-    buf = BytesIO()
-    await file.download_to_memory(buf)
-    img_bytes = buf.getvalue()
-
+async def yandex_ocr(img_bytes: bytes) -> str:
+    img_b64 = base64.b64encode(img_bytes).decode()
+    payload = {
+        "analyze_specs": [{
+            "content": img_b64,
+            "features": [{"type": "TEXT_DETECTION"}]
+        }]
+    }
+    headers = {"Authorization": f"Api-Key {YANDEX_API_KEY}"}
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(YANDEX_URL, headers=headers, json=payload)
+        r.raise_for_status()
+        data = r.json()
+    texts = []
     try:
-        text = ocr_image_to_text(img_bytes)
-        logger.info("OCR result: %s", text)
-        found_dates = extract_dates_from_text(text)
-    except Exception as e:
-        logger.exception("OCR error: %s", e)
-        await update.message.reply_text("⚠️ Ошибка при распознавании. Попробуйте другое фото.")
-        return
+        for p in data["results"][0]["results"][0]["textDetection"]["pages"]:
+            for b in p["blocks"]:
+                for l in b["lines"]:
+                    texts.append(" ".join([w["text"] for w in l["words"]]))
+    except Exception:
+        return ""
+    return " ".join(texts)
 
-    today = datetime.now(TZ).date()
+def parse_date(text: str):
+    match = re.search(DATE_REGEX, text)
+    if not match:
+        return None
+    raw = match.group(0)
+    try:
+        if len(raw) == 6:  # YYMMDD
+            return datetime.strptime(raw, "%y%m%d")
+        elif len(raw.split(".")) == 3:
+            return datetime.strptime(raw, "%d.%m.%y")
+    except Exception:
+        try:
+            return datetime.strptime(raw, "%d.%m.%Y")
+        except Exception:
+            return None
 
-    if not found_dates:
-        await update.message.reply_text("⚠️ Не удалось распознать дату. Сделайте фото крупнее и без бликов.")
+def compare_with_today(dt: datetime):
+    now = datetime.now(pytz.timezone(TZ)).date()
+    diff = (dt.date() - now).days
+    if diff < 0:
+        return f"📅 {dt.date()} — срок <b>истёк</b> {abs(diff)} дн. назад."
+    elif diff == 0:
+        return f"📅 {dt.date()} — <b>сегодня</b>."
     else:
-        dates_str = ", ".join([d.isoformat() for d in found_dates])
-        if today in found_dates:
-            await update.message.reply_text(f"✅ Найдены даты: {dates_str}\nСегодня: {today} (совпадает)")
-        else:
-            await update.message.reply_text(f"❌ Найдены даты: {dates_str}\nСегодня: {today} (совпадений нет)")
+        return f"📅 {dt.date()} — осталось <b>{diff}</b> дн."
 
-# ======= HTTP-заглушка для Render =======
-async def handle_root(request):
-    return web.Response(text="OK")
+@dp.message_handler(commands=["start"])
+async def start_cmd(msg: types.Message):
+    await msg.answer("Привет 👋 Отправь фото банки, я распознаю дату и сравню с текущей.")
 
-def run_http_server():
-    app = web.Application()
-    app.add_routes([web.get("/", handle_root)])
-    port = int(os.environ.get("PORT", 8080))
-    web.run_app(app, host="0.0.0.0", port=port)
+@dp.message_handler(content_types=["photo"])
+async def photo_handler(msg: types.Message):
+    photo = msg.photo[-1]
+    bio = io.BytesIO()
+    await photo.download(destination=bio)
+    text = await yandex_ocr(bio.getvalue())
+    if not text:
+        await msg.answer("❌ Не удалось распознать текст.")
+        return
+    dt = parse_date(text)
+    if not dt:
+        await msg.answer(f"Текст: <code>{text}</code>\nДата не найдена.")
+        return
+    await msg.answer(compare_with_today(dt))
 
-# ======= Entrypoint =======
-if __name__ == "__main__":
-    if not TELEGRAM_TOKEN:
-        raise RuntimeError("TG_BOT_TOKEN not set")
+@app.on_event("startup")
+async def on_startup():
+    if BASE_URL:
+        await bot.set_webhook(f"{BASE_URL}/telegram/{WEBHOOK_SECRET}")
 
-    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    application.add_handler(CommandHandler("start", cmd_start))
-    application.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, handle_photo))
+@app.post("/telegram/{secret}")
+async def telegram_webhook(secret: str, request: Request):
+    if secret != WEBHOOK_SECRET:
+        raise HTTPException(status_code=403, detail="forbidden")
+    update = types.Update(**await request.json())
+    await dp.process_update(update)
+    return {"ok": True}
 
-    # Если Web Service — поднимаем заглушку на порт
-    import threading
-    threading.Thread(target=run_http_server, daemon=True).start()
-
-    application.run_polling()
+@app.get("/health")
+async def health():
+    return {"status": "ok"}

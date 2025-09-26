@@ -30,33 +30,37 @@ REQUEST_INTERVAL_HOURS = 2
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Подписанные чаты
 registered_chats: set[int] = set()
 
-# Регулярки для поиска даты
 DATE_REGEXES = [
     r'(?P<d>\b[0-3]?\d[.\-/][0-1]?\d[.\-/](?:20[0-9]{2}|19[0-9]{2}|\d{2})\b)',
     r'(?P<d>\b(?:20[0-9]{2}|19[0-9]{2})[.\-/][0-1]?\d[.\-/][0-3]?\d\b)',
     r'(?P<d>\b[0-3]?\d[ \-\/\.](?:янв|фев|мар|апр|май|июн|июл|авг|сен|oct|окт|ноя|дек|[A-Za-z]{3,9})[ \-\/\.][0-9]{2,4}\b)',
 ]
 
-# ======= OCR helpers =======
-def preprocess_image_for_ocr(img_bytes: bytes) -> np.ndarray:
+# ======= OCR (улучшенный) =======
+def ocr_image_to_text(img_bytes: bytes) -> str:
     arr = np.frombuffer(img_bytes, np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-    if img is None:
-        raise ValueError("Не удалось прочитать изображение")
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    h, w = gray.shape
-    if min(h, w) < 500:
-        gray = cv2.resize(gray, (w * 2, h * 2), interpolation=cv2.INTER_LINEAR)
-    return cv2.medianBlur(gray, 3)
 
-def ocr_image_to_text(img_bytes: bytes) -> str:
-    processed = preprocess_image_for_ocr(img_bytes)
-    return pytesseract.image_to_string(
-        processed, lang="rus+eng", config="--oem 3 --psm 6"
-    )
+    # Усиление контраста
+    gray = cv2.equalizeHist(gray)
+
+    # Инверсия (для светлой лазерной печати)
+    gray = cv2.bitwise_not(gray)
+
+    # Масштабирование ×3
+    gray = cv2.resize(gray, (gray.shape[1]*3, gray.shape[0]*3))
+
+    # Бинаризация (Otsu)
+    _, th = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    # OCR только для цифр, точек и дефисов
+    custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789./-'
+    text = pytesseract.image_to_string(th, config=custom_config)
+
+    return text
 
 def extract_date_from_text(text: str):
     s = text.replace("\n", " ").lower()
@@ -73,7 +77,7 @@ def extract_date_from_text(text: str):
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     registered_chats.add(update.effective_chat.id)
     await update.message.reply_text(
-        "✅ Бот активен. Я буду запрашивать фото каждые 2 часа."
+        "✅ Бот активен. Пришлите фото даты на банке — я сравню с сегодняшним числом."
     )
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -86,22 +90,20 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         text = ocr_image_to_text(img_bytes)
-        logger.info("OCR result: %s", text)   # 👈 логируем распознанный текст
+        logger.info("OCR result: %s", text)  # логируем распознанный текст
         found_date = extract_date_from_text(text)
     except Exception as e:
         logger.exception("OCR error: %s", e)
-        await update.message.reply_text("⚠️ Ошибка при распознавании. Пришлите фото чётче.")
+        await update.message.reply_text("⚠️ Ошибка при распознавании. Попробуйте другое фото.")
         return
 
     today = datetime.now(TZ).date()
     if found_date == today:
         await update.message.reply_text(f"✅ Дата совпадает: {found_date.isoformat()}")
     elif found_date is None:
-        await update.message.reply_text("⚠️ Не удалось распознать дату. Сделайте фото крупнее.")
+        await update.message.reply_text("⚠️ Не удалось распознать дату. Сделайте фото крупнее и без бликов.")
     else:
-        await update.message.reply_text(
-            f"❌ Дата НЕ совпадает. Найдено: {found_date}, сегодня: {today}"
-        )
+        await update.message.reply_text(f"❌ Дата НЕ совпадает. Найдено: {found_date}, сегодня: {today}")
 
 # ======= HTTP-заглушка для Render =======
 async def handle_root(request):
@@ -122,9 +124,7 @@ if __name__ == "__main__":
     application.add_handler(CommandHandler("start", cmd_start))
     application.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, handle_photo))
 
-    # Запускаем HTTP-заглушку параллельно
     import threading
     threading.Thread(target=run_http_server, daemon=True).start()
 
-    # 🚀 Запуск бота (без asyncio.run)
     application.run_polling()

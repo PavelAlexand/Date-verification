@@ -87,20 +87,18 @@ def compare_with_today(dt: datetime):
 # -----------------------------
 # Хендлеры Telegram
 # -----------------------------
-@dp.message_handler(commands=["start"])
-async def start_cmd(msg: types.Message):
-    await msg.answer("Привет 👋 Отправь фото банки, я распознаю дату и сравню её с текущей.")
-
 @dp.message_handler(content_types=["photo"])
 async def photo_handler(msg: types.Message):
     photo = msg.photo[-1]
 
-    # ✅ Фикс: скачиваем файл через bot.get_file и bot.download_file
+    # Получаем путь к файлу у Telegram
     file = await bot.get_file(photo.file_id)
+
+    # Скачиваем файл в BytesIO
     bio = io.BytesIO()
     await bot.download_file(file.file_path, destination=bio)
 
-    # OCR
+    # Распознаём текст через OCR
     text = await yandex_ocr(bio.getvalue())
     if not text:
         await msg.answer("❌ Не удалось распознать текст.")
@@ -112,7 +110,6 @@ async def photo_handler(msg: types.Message):
         return
 
     await msg.answer(compare_with_today(dt))
-
 # -----------------------------
 # Webhook FastAPI
 # -----------------------------

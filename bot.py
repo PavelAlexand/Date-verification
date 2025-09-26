@@ -174,9 +174,7 @@ if _name_ == "_main_":
     application.add_handler(CommandHandler("checknow", cmd_checknow))
     application.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, handle_photo))
 
-    # run small HTTP server in parallel thread
     import threading
     threading.Thread(target=run_http_server, daemon=True).start()
 
-    # IMPORTANT: synchronous run to avoid event loop conflicts on Render
     application.run_polling()

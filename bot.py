@@ -86,8 +86,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         text = ocr_image_to_text(img_bytes)
+        logger.info("OCR result: %s", text)   # 👈 логируем распознанный текст
         found_date = extract_date_from_text(text)
-    except Exception:
+    except Exception as e:
+        logger.exception("OCR error: %s", e)
         await update.message.reply_text("⚠️ Ошибка при распознавании. Пришлите фото чётче.")
         return
 
@@ -120,9 +122,9 @@ if __name__ == "__main__":
     application.add_handler(CommandHandler("start", cmd_start))
     application.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, handle_photo))
 
-    # Поднимаем HTTP-заглушку в отдельном потоке
+    # Запускаем HTTP-заглушку параллельно
     import threading
     threading.Thread(target=run_http_server, daemon=True).start()
 
-    # Запускаем бота
+    # 🚀 Запуск бота (без asyncio.run)
     application.run_polling()

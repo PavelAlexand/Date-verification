@@ -90,8 +90,8 @@ async def photo_handler(message: types.Message):
     else:
         result = f"📸 Текст без даты:\n{text}"
 
-    # 🔹 Отправляем сообщение явно через bot
-    await bot.send_message(message.chat.id, result)
+    # 🔹 Важно: используем bot.send_message, а не message.reply()
+    await bot.send_message(chat_id=message.chat.id, text=result)
 
 
 # ---- Webhook ----

@@ -94,17 +94,17 @@ if _name_ == "_main_":
         raise RuntimeError("TG_BOT_TOKEN not set")
 
     application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
-    # планировщик
+    # планировщик (каждые 2 часа запрос фото)
     scheduler.add_job(lambda: tick(application.bot),
                      trigger=IntervalTrigger(hours=REQUEST_INTERVAL_HOURS))
     scheduler.start()
 
-    # Запускаем и Telegram-бота, и HTTP-заглушку
+    # Запускаем HTTP-заглушку параллельно
     import threading
     threading.Thread(target=run_http_server, daemon=True).start()
 
+    # ❗ ВАЖНО: только синхронный вызов, без asyncio.run()
     application.run_polling()

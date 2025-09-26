@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# System deps for Tesseract and OpenCV
+# Ставим зависимости для OpenCV и Tesseract
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     libtesseract-dev \

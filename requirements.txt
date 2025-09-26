@@ -1,8 +1,8 @@
-python-telegram-bot==20.3
-apscheduler
-opencv-python-headless
-pytesseract
-numpy
-pytz
-python-dateutil
-aiohttp
+python-telegram-bot==20.5
+apscheduler==3.10.1
+opencv-python-headless==4.8.0.76
+pytesseract==0.3.10
+numpy==1.26.0
+pytz==2024.1
+python-dateutil==2.8.2
+aiohttp==3.9.5

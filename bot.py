@@ -29,7 +29,7 @@ REQUEST_INTERVAL_HOURS = 2
 # ==========================
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(_name_)
+logger = logging.getLogger(__name__)
 
 # Track subscribed chats
 registered_chats: set[int] = set()
@@ -164,7 +164,7 @@ def run_http_server():
 
 
 # ======= Entrypoint =======
-if _name_ == "_main_":
+if _name_ == "__main__":
     if not TELEGRAM_TOKEN:
         raise RuntimeError("TG_BOT_TOKEN not set")
 

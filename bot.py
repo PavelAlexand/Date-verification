@@ -185,8 +185,11 @@ async def main():
 
 if _name_ == "_main_":
     import asyncio
+
     try:
         asyncio.run(main())
-    except RuntimeError:
+    except RuntimeError as e:
+        # если цикл уже запущен (как на Render) — используем существующий
         loop = asyncio.get_event_loop()
-        loop.run_until_complete(main())
+        loop.create_task(main())
+        loop.run_forever()

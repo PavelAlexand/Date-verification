@@ -63,7 +63,6 @@ def extract_date(text: str) -> str:
 # ---- Хендлер фото ----
 @dp.message_handler(content_types=["photo"])
 async def photo_handler(message: types.Message):
-    # Получаем file_id последнего фото
     photo = message.photo[-1]
     file = await bot.get_file(photo.file_id)
 
@@ -91,7 +90,8 @@ async def photo_handler(message: types.Message):
     else:
         result = f"📸 Текст без даты:\n{text}"
 
-    await message.reply(result)
+    # 🔹 Отправляем сообщение явно через bot
+    await bot.send_message(message.chat.id, result)
 
 
 # ---- Webhook ----

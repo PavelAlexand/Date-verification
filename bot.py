@@ -1,5 +1,4 @@
 import os
-import io
 import re
 import base64
 import logging
@@ -9,10 +8,10 @@ from fastapi import FastAPI, Request
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import Update
 
-# 🔹 Логирование
+# Логирование
 logging.basicConfig(level=logging.INFO)
 
-# 🔹 Переменные окружения (Render → Environment Variables)
+# Переменные окружения (Render → Environment Variables)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 YANDEX_API_KEY = os.getenv("YANDEX_API_KEY")
 YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID")
@@ -20,11 +19,11 @@ YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID")
 if not BOT_TOKEN or not YANDEX_API_KEY or not YANDEX_FOLDER_ID:
     raise RuntimeError("❌ Не заданы BOT_TOKEN, YANDEX_API_KEY или YANDEX_FOLDER_ID")
 
-# 🔹 Telegram bot
+# Telegram bot
 bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
 dp = Dispatcher(bot)
 
-# 🔹 FastAPI
+# FastAPI
 app = FastAPI()
 
 
@@ -70,7 +69,6 @@ def extract_date(text: str) -> str | None:
         if match:
             date_str = match.group(1)
             try:
-                # Определяем формат автоматически
                 if re.match(r"\d{2}[.\-/]\d{2}[.\-/]\d{4}", date_str):
                     parsed = datetime.strptime(date_str, "%d.%m.%Y")
                 elif re.match(r"\d{2}[.\-/]\d{2}[.\-/]\d{2}", date_str):
@@ -87,7 +85,7 @@ def extract_date(text: str) -> str | None:
                 return parsed.strftime("%d.%m.%Y")
 
             except Exception:
-                continue  # если не смогли распарсить — пробуем следующий шаблон
+                continue  # если не удалось распарсить — пробуем следующий шаблон
 
     return None
 
@@ -122,7 +120,7 @@ async def photo_handler(message: types.Message):
     else:
         result = f"📸 Текст без даты:\n{text}"
 
-    # 🔹 Важно: используем bot.send_message, а не message.reply()
+    # Важно: отправляем сообщение явно через bot
     await bot.send_message(chat_id=message.chat.id, text=result)
 
 

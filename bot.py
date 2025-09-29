@@ -1,18 +1,16 @@
 import os
-import base64
 import logging
-from io import BytesIO
-
+import base64
 import httpx
 from fastapi import FastAPI, Request
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import Update
 
-# Логирование
+# 🔹 Логирование
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("bot")
 
-# Читаем переменные окружения
+# 🔹 Чтение токенов из переменных окружения
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 YANDEX_OCR_API_KEY = os.getenv("YANDEX_OCR_API_KEY")
 YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID")
@@ -24,86 +22,94 @@ if not YANDEX_OCR_API_KEY:
 if not YANDEX_FOLDER_ID:
     raise ValueError("❌ YANDEX_FOLDER_ID не найден в переменных окружения")
 
-# Telegram
-bot = Bot(token=TELEGRAM_TOKEN)
+# 🔹 Инициализация бота и диспетчера
+bot = Bot(token=TELEGRAM_TOKEN, parse_mode="HTML")
 dp = Dispatcher(bot)
 
-# FastAPI
+# 🔹 FastAPI приложение
 app = FastAPI()
 
 
-async def recognize_text(image_bytes: bytes) -> str:
-    """Отправка картинки в Yandex OCR API"""
-    img_base64 = base64.b64encode(image_bytes).decode("utf-8")
+# ✅ Root endpoint для проверки
+@app.get("/")
+async def root():
+    return {"status": "ok", "message": "🚀 Бот работает"}
 
+
+# ✅ Яндекс Vision OCR
+async def yandex_ocr(image_bytes: bytes) -> str:
     url = "https://vision.api.cloud.yandex.net/vision/v1/batchAnalyze"
-    headers = {"Authorization": f"Api-Key {YANDEX_OCR_API_KEY}"}
+    headers = {
+        "Authorization": f"Api-Key {YANDEX_OCR_API_KEY}",
+        "Content-Type": "application/json",
+    }
 
-    json_data = {
+    data = {
         "folderId": YANDEX_FOLDER_ID,
         "analyze_specs": [
             {
-                "content": img_base64,
+                "content": base64.b64encode(image_bytes).decode("utf-8"),
                 "features": [{"type": "TEXT_DETECTION"}],
             }
         ],
     }
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(url, headers=headers, json=json_data)
-
-    logger.info(f"⬅️ Ответ от Yandex OCR: {response.status_code} {response.text}")
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, headers=headers, json=data)
 
     if response.status_code != 200:
-        return f"⚠️ Ошибка Yandex OCR: {response.status_code} {response.text}"
+        logger.error(f"❌ Ошибка от Yandex API: {response.status_code} {response.text}")
+        return "Ошибка распознавания текста"
 
+    result = response.json()
     try:
-        result = response.json()
-        text = ""
-        for page in result["results"][0]["results"]:
-            for block in page["textDetection"]["pages"][0]["blocks"]:
-                for line in block["lines"]:
-                    for word in line["words"]:
-                        text += word["text"] + " "
-        return text.strip() if text else "❌ Текст не распознан"
-    except Exception as e:
-        logger.error(f"Ошибка обработки JSON: {e}")
-        return "⚠️ Ошибка при разборе ответа OCR"
+        text = result["results"][0]["results"][0]["textDetection"]["pages"][0]["blocks"][0]["lines"][0]["words"][0]["text"]
+    except Exception:
+        text = "Дата не распознана"
+
+    return text
 
 
-# Обработка фото
+# ✅ Обработчик фото
 @dp.message_handler(content_types=["photo"])
 async def photo_handler(message: types.Message):
+    await bot.set_current(bot)  # фикс для контекста
     try:
         photo = message.photo[-1]
-        bio = BytesIO()
-        await photo.download(destination_file=bio)
-        text = await recognize_text(bio.getvalue())
+        file = await bot.get_file(photo.file_id)
+        file_path = file.file_path
+
+        # Скачиваем фото с серверов Telegram
+        async with httpx.AsyncClient() as client:
+            file_bytes = await client.get(
+                f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_path}"
+            )
+        text = await yandex_ocr(file_bytes.content)
         await message.reply(f"📅 Распознанный текст: {text}")
+
     except Exception as e:
-        logger.exception("Ошибка при обработке фото")
-        await message.reply(f"⚠️ Ошибка: {e}")
+        logger.error(f"Ошибка при обработке фото: {e}")
+        await message.reply("❌ Ошибка при обработке фото")
 
 
-# Webhook
+# ✅ Вебхук от Telegram
 @app.post("/telegram/webhook")
 async def telegram_webhook(request: Request):
-    data = await request.json()
-    update = Update.to_object(data)
+    update = Update(**await request.json())
     await dp.process_update(update)
     return {"ok": True}
 
 
+# ✅ Установка вебхука при старте
 @app.on_event("startup")
 async def on_startup():
-    webhook_url = os.getenv("WEBHOOK_URL", "https://date-verification.onrender.com/telegram/webhook")
+    webhook_url = "https://date-verification.onrender.com/telegram/webhook"
     await bot.set_webhook(webhook_url)
     logger.info(f"✅ Webhook установлен: {webhook_url}")
 
 
+# ✅ Закрытие соединения при завершении
 @app.on_event("shutdown")
 async def on_shutdown():
-    await bot.delete_webhook()
     session = await bot.get_session()
     await session.close()
-    logger.info("🛑 Бот остановлен")

@@ -1,118 +1,109 @@
 import os
+import base64
 import logging
+from io import BytesIO
+
 import httpx
 from fastapi import FastAPI, Request
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import Update
-from aiogram.utils.executor import start_webhook
 
-# =============================
-# 🔧 Логирование
-# =============================
+# Логирование
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("bot")
 
-# =============================
-# 🔧 Переменные окружения
-# =============================
+# Читаем переменные окружения
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 YANDEX_OCR_API_KEY = os.getenv("YANDEX_OCR_API_KEY")
+YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID")
 
 if not TELEGRAM_TOKEN:
     raise ValueError("❌ TELEGRAM_TOKEN не найден в переменных окружения")
-
 if not YANDEX_OCR_API_KEY:
     raise ValueError("❌ YANDEX_OCR_API_KEY не найден в переменных окружения")
+if not YANDEX_FOLDER_ID:
+    raise ValueError("❌ YANDEX_FOLDER_ID не найден в переменных окружения")
 
-# =============================
-# 🔧 Настройки бота и webhook
-# =============================
-WEBHOOK_PATH = "/telegram/webhook"
-WEBHOOK_URL = f"https://date-verification.onrender.com{WEBHOOK_PATH}"
-
+# Telegram
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher(bot)
 
-# =============================
-# 🔧 FastAPI
-# =============================
+# FastAPI
 app = FastAPI()
 
-# =============================
-# 📷 Обработчик фото
-# =============================
-import base64
 
+async def recognize_text(image_bytes: bytes) -> str:
+    """Отправка картинки в Yandex OCR API"""
+    img_base64 = base64.b64encode(image_bytes).decode("utf-8")
+
+    url = "https://vision.api.cloud.yandex.net/vision/v1/batchAnalyze"
+    headers = {"Authorization": f"Api-Key {YANDEX_OCR_API_KEY}"}
+
+    json_data = {
+        "folderId": YANDEX_FOLDER_ID,
+        "analyze_specs": [
+            {
+                "content": img_base64,
+                "features": [{"type": "TEXT_DETECTION"}],
+            }
+        ],
+    }
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(url, headers=headers, json=json_data)
+
+    logger.info(f"⬅️ Ответ от Yandex OCR: {response.status_code} {response.text}")
+
+    if response.status_code != 200:
+        return f"⚠️ Ошибка Yandex OCR: {response.status_code} {response.text}"
+
+    try:
+        result = response.json()
+        text = ""
+        for page in result["results"][0]["results"]:
+            for block in page["textDetection"]["pages"][0]["blocks"]:
+                for line in block["lines"]:
+                    for word in line["words"]:
+                        text += word["text"] + " "
+        return text.strip() if text else "❌ Текст не распознан"
+    except Exception as e:
+        logger.error(f"Ошибка обработки JSON: {e}")
+        return "⚠️ Ошибка при разборе ответа OCR"
+
+
+# Обработка фото
 @dp.message_handler(content_types=["photo"])
 async def photo_handler(message: types.Message):
     try:
         photo = message.photo[-1]
-        file = await bot.get_file(photo.file_id)
-        file_path = file.file_path
-
-        file_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_path}"
-
-        # Загружаем картинку
-        async with httpx.AsyncClient() as client:
-            img_bytes = (await client.get(file_url)).content
-            img_base64 = base64.b64encode(img_bytes).decode("utf-8")
-
-            response = await client.post(
-                "https://vision.api.cloud.yandex.net/vision/v1/batchAnalyze",
-                headers={
-                    "Authorization": f"Api-Key {YANDEX_OCR_API_KEY}",
-                },
-                json={
-                    "folderId": os.getenv("YANDEX_FOLDER_ID"),
-                    "analyze_specs": [{
-                        "content": img_base64,
-                        "features": [{"type": "TEXT_DETECTION"}]
-                    }]
-                }
-            )
-
-        result = response.json()
-        logger.info(f"Yandex OCR response: {result}")
-
-        # Собираем весь текст
-        text_blocks = []
-        try:
-            for page in result["results"][0]["results"][0]["textDetection"]["pages"]:
-                for block in page["blocks"]:
-                    for line in block["lines"]:
-                        line_text = " ".join([w["text"] for w in line["words"]])
-                        text_blocks.append(line_text)
-            text = "\n".join(text_blocks) if text_blocks else "❌ Дата не распознана"
-        except Exception:
-            text = "❌ Дата не распознана"
-
-        await bot.send_message(message.chat.id, f"📅 Распознанный текст:\n{text}")
-
+        bio = BytesIO()
+        await photo.download(destination_file=bio)
+        text = await recognize_text(bio.getvalue())
+        await message.reply(f"📅 Распознанный текст: {text}")
     except Exception as e:
-        logger.error(f"Ошибка при обработке фото: {e}")
-        await bot.send_message(message.chat.id, "⚠️ Ошибка при обработке изображения. Попробуйте ещё раз.")
+        logger.exception("Ошибка при обработке фото")
+        await message.reply(f"⚠️ Ошибка: {e}")
 
 
-# =============================
-# 🔧 Webhook endpoint
-# =============================
-@app.post(WEBHOOK_PATH)
+# Webhook
+@app.post("/telegram/webhook")
 async def telegram_webhook(request: Request):
-    update = Update(**await request.json())
+    data = await request.json()
+    update = Update.to_object(data)
     await dp.process_update(update)
     return {"ok": True}
 
 
-# =============================
-# 🔧 Установка webhook при старте
-# =============================
 @app.on_event("startup")
 async def on_startup():
-    await bot.set_webhook(WEBHOOK_URL)
-    logger.info(f"✅ Webhook установлен: {WEBHOOK_URL}")
+    webhook_url = os.getenv("WEBHOOK_URL", "https://date-verification.onrender.com/telegram/webhook")
+    await bot.set_webhook(webhook_url)
+    logger.info(f"✅ Webhook установлен: {webhook_url}")
 
 
 @app.on_event("shutdown")
 async def on_shutdown():
+    await bot.delete_webhook()
     session = await bot.get_session()
     await session.close()
+    logger.info("🛑 Бот остановлен")

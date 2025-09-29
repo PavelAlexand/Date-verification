@@ -41,6 +41,8 @@ app = FastAPI()
 # =============================
 # 📷 Обработчик фото
 # =============================
+import base64
+
 @dp.message_handler(content_types=["photo"])
 async def photo_handler(message: types.Message):
     try:
@@ -50,10 +52,11 @@ async def photo_handler(message: types.Message):
 
         file_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_path}"
 
-        # =============================
-        # Отправка в Yandex Vision API
-        # =============================
+        # Загружаем картинку
         async with httpx.AsyncClient() as client:
+            img_bytes = (await client.get(file_url)).content
+            img_base64 = base64.b64encode(img_bytes).decode("utf-8")
+
             response = await client.post(
                 "https://vision.api.cloud.yandex.net/vision/v1/batchAnalyze",
                 headers={
@@ -62,7 +65,7 @@ async def photo_handler(message: types.Message):
                 json={
                     "folderId": os.getenv("YANDEX_FOLDER_ID"),
                     "analyze_specs": [{
-                        "content": (await client.get(file_url)).content.decode("latin1"),
+                        "content": img_base64,
                         "features": [{"type": "TEXT_DETECTION"}]
                     }]
                 }
@@ -71,15 +74,19 @@ async def photo_handler(message: types.Message):
         result = response.json()
         logger.info(f"Yandex OCR response: {result}")
 
-        # Извлекаем текст
-        text = ""
+        # Собираем весь текст
+        text_blocks = []
         try:
-            text = result["results"][0]["results"][0]["textDetection"]["pages"][0]["blocks"][0]["lines"][0]["words"][0]["text"]
+            for page in result["results"][0]["results"][0]["textDetection"]["pages"]:
+                for block in page["blocks"]:
+                    for line in block["lines"]:
+                        line_text = " ".join([w["text"] for w in line["words"]])
+                        text_blocks.append(line_text)
+            text = "\n".join(text_blocks) if text_blocks else "❌ Дата не распознана"
         except Exception:
             text = "❌ Дата не распознана"
 
-        # Отправляем результат пользователю
-        await bot.send_message(message.chat.id, f"📅 Распознанный текст: {text}")
+        await bot.send_message(message.chat.id, f"📅 Распознанный текст:\n{text}")
 
     except Exception as e:
         logger.error(f"Ошибка при обработке фото: {e}")

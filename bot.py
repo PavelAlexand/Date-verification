@@ -53,11 +53,38 @@ async def yandex_ocr(image_bytes: bytes) -> str:
 
 
 # ---- Извлечение даты из текста ----
-def extract_date(text: str) -> str:
-    match = re.search(r"(\d{2}[.\-/]\d{2}[.\-/]\d{4})", text)
-    if match:
-        return match.group(1)
-    return None
+def extract_date(text: str) -> str | None:
+    """
+    Ищет дату в тексте и приводит её к формату dd.mm.yyyy
+    """
+    patterns = [
+        r"(\d{2}[.\-/]\d{2}[.\-/]\d{4})",  # 26.09.2025
+        r"(\d{2}[.\-/]\d{2}[.\-/]\d{2})",  # 26/09/25
+        r"(\d{4}[.\-/]\d{2}[.\-/]\d{2})",  # 2025-09-26
+        r"\b(\d{6})\b",                    # 260925
+        r"\b(\d{8})\b"                     # 20250926
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            date_str = match.group(1)
+            try:
+                # Определяем формат автоматически
+                if re.match(r"\d{2}[.\-/]\d{2}[.\-/]\d{4}", date_str):
+                    parsed = datetime.strptime(date_str, "%d.%m.%Y")
+                elif re.match(r"\d{2}[.\-/]\d{2}[.\-/]\d{2}", date_str):
+                    parsed = datetime.strptime(date_str, "%d.%m.%y")
+                elif re.match(r"\d{4}[.\-/]\d{2}[.\-/]\d{2}", date_str):
+                    parsed = datetime.strptime(date_str, "%Y-%m-%d")
+                elif len(date_str) == 6:  # ddMMyy
+                    parsed = datetime.strptime(date_str, "%d%m%y")
+                elif len(date_str) == 8:  # yyyyMMdd
+                    parsed = datetime.strptime(date_str, "%Y%m%d")
+                else:
+                    continue
+
+                return parsed.strftime("%d.%m.%Y")
 
 
 # ---- Хендлер фото ----

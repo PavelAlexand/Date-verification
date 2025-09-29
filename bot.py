@@ -72,11 +72,16 @@ async def telegram_webhook(request: Request):
 @dp.message_handler(content_types=["photo"])
 async def photo_handler(message: types.Message):
     try:
-        # Скачиваем фото
+        # Скачиваем фото вручную через bot
         photo = message.photo[-1]
-        bio = io.BytesIO()
-        await photo.download(destination_file=bio)
-        bio.seek(0)
+        file = await bot.get_file(photo.file_id)
+        file_path = file.file_path
+
+        # Получаем файл из Telegram
+        file_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_path}"
+        async with httpx.AsyncClient() as client:
+            response = await client.get(file_url)
+            image_bytes = response.content
 
         # Отправляем в Яндекс OCR
         headers = {
@@ -84,29 +89,29 @@ async def photo_handler(message: types.Message):
             "Content-Type": "application/json"
         }
         body = {
-            "folderId": YANDEX_FOLDER_ID,
+            "folderId": FOLDER_ID,
             "analyze_specs": [{
-                "content": bio.read().decode("latin1"),  # base64 лучше, но оставляем так
+                "content": image_bytes.decode("latin1"),  # лучше base64
                 "features": [{"type": "TEXT_DETECTION"}]
             }]
         }
 
         async with httpx.AsyncClient() as client:
-            response = await client.post(
+            ocr_response = await client.post(
                 "https://vision.api.cloud.yandex.net/vision/v1/batchAnalyze",
                 headers=headers,
                 json=body
             )
 
-        if response.status_code != 200:
-            await message.reply("⚠️ Ошибка при обращении к Yandex OCR API")
+        if ocr_response.status_code != 200:
+            await bot.send_message(message.chat.id, "⚠️ Ошибка при обращении к Yandex OCR API")
             return
 
-        result = response.json()
+        result = ocr_response.json()
         text = result["results"][0]["results"][0]["textDetection"]["pages"][0]["blocks"][0]["lines"][0]["text"]
 
-        await message.reply(f"📅 Распознанный текст: {text}")
+        await bot.send_message(message.chat.id, f"📅 Распознанный текст: {text}")
 
     except Exception as e:
         logger.error("Ошибка при обработке фото", exc_info=True)
-        await message.reply(f"⚠️ Ошибка: {e}")
+        await bot.send_message(message.chat.id, f"⚠️ Ошибка: {e}")

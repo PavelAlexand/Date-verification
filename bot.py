@@ -17,14 +17,14 @@ logger = logging.getLogger("bot")
 # ==============================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 YANDEX_OCR_API_KEY = os.getenv("YANDEX_OCR_API_KEY")
-FOLDER_ID = os.getenv("FOLDER_ID")
+FOLDER_ID = os.getenv("YANDEX_FOLDER_ID")
 
 if not TELEGRAM_TOKEN:
     raise ValueError("❌ TELEGRAM_TOKEN не найден в переменных окружения")
 if not YANDEX_OCR_API_KEY:
     raise ValueError("❌ YANDEX_OCR_API_KEY не найден в переменных окружения")
 if not FOLDER_ID:
-    raise ValueError("❌ FOLDER_ID не найден в переменных окружения")
+    raise ValueError("❌ YANDEX_FOLDER_ID не найден в переменных окружения")
 
 # ==============================
 # Инициализация бота
@@ -84,7 +84,7 @@ async def photo_handler(message: types.Message):
             "Content-Type": "application/json"
         }
         body = {
-            "folderId": FOLDER_ID,
+            "folderId": YANDEX_FOLDER_ID,
             "analyze_specs": [{
                 "content": bio.read().decode("latin1"),  # base64 лучше, но оставляем так
                 "features": [{"type": "TEXT_DETECTION"}]

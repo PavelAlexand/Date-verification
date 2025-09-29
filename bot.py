@@ -1,118 +1,114 @@
 import os
 import logging
-import base64
 import httpx
 from fastapi import FastAPI, Request
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import Update
+from aiogram.dispatcher.filters import CommandStart
+from aiogram.utils.executor import start_webhook
 
+# ==============================
 # 🔹 Логирование
+# ==============================
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("bot")
 
-# 🔹 Чтение токенов из переменных окружения
+# ==============================
+# 🔹 Переменные окружения
+# ==============================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 YANDEX_OCR_API_KEY = os.getenv("YANDEX_OCR_API_KEY")
-YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID")
 
 if not TELEGRAM_TOKEN:
     raise ValueError("❌ TELEGRAM_TOKEN не найден в переменных окружения")
 if not YANDEX_OCR_API_KEY:
     raise ValueError("❌ YANDEX_OCR_API_KEY не найден в переменных окружения")
-if not YANDEX_FOLDER_ID:
-    raise ValueError("❌ YANDEX_FOLDER_ID не найден в переменных окружения")
 
-# 🔹 Инициализация бота и диспетчера
-bot = Bot(token=TELEGRAM_TOKEN, parse_mode="HTML")
+# ==============================
+# 🔹 Инициализация
+# ==============================
+bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher(bot)
-
-# 🔹 FastAPI приложение
 app = FastAPI()
 
+WEBHOOK_URL = "https://date-verification.onrender.com/telegram/webhook"
 
-# ✅ Root endpoint для проверки
-@app.get("/")
-async def root():
-    return {"status": "ok", "message": "🚀 Бот работает"}
+# ==============================
+# 🔹 Старт
+# ==============================
+@dp.message_handler(CommandStart())
+async def start_handler(message: types.Message):
+    await bot.send_message(message.chat.id, "👋 Отправь фото с датой — я её распознаю!")
 
-
-# ✅ Яндекс Vision OCR
-async def yandex_ocr(image_bytes: bytes) -> str:
-    url = "https://vision.api.cloud.yandex.net/vision/v1/batchAnalyze"
-    headers = {
-        "Authorization": f"Api-Key {YANDEX_OCR_API_KEY}",
-        "Content-Type": "application/json",
-    }
-
-    data = {
-        "folderId": YANDEX_FOLDER_ID,
-        "analyze_specs": [
-            {
-                "content": base64.b64encode(image_bytes).decode("utf-8"),
-                "features": [{"type": "TEXT_DETECTION"}],
-            }
-        ],
-    }
-
-    async with httpx.AsyncClient() as client:
-        response = await client.post(url, headers=headers, json=data)
-
-    if response.status_code != 200:
-        logger.error(f"❌ Ошибка от Yandex API: {response.status_code} {response.text}")
-        return "Ошибка распознавания текста"
-
-    result = response.json()
-    try:
-        text = result["results"][0]["results"][0]["textDetection"]["pages"][0]["blocks"][0]["lines"][0]["words"][0]["text"]
-    except Exception:
-        text = "Дата не распознана"
-
-    return text
-
-
-# ✅ Обработчик фото
+# ==============================
+# 🔹 Обработка фото
+# ==============================
 @dp.message_handler(content_types=["photo"])
 async def photo_handler(message: types.Message):
     try:
+        # Скачиваем фото
         photo = message.photo[-1]
         file = await bot.get_file(photo.file_id)
         file_path = file.file_path
+        file_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_path}"
 
-        # Скачиваем фото напрямую
         async with httpx.AsyncClient() as client:
-            file_bytes = await client.get(
-                f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_path}"
-            )
+            img_bytes = await client.get(file_url)
 
-        text = await yandex_ocr(file_bytes.content)
+            # Запрос в Яндекс Vision
+            ocr_url = "https://vision.api.cloud.yandex.net/vision/v1/batchAnalyze"
+            headers = {"Authorization": f"Api-Key {YANDEX_OCR_API_KEY}"}
+            payload = {
+                "folderId": "<YOUR_FOLDER_ID>",
+                "analyze_specs": [{
+                    "content": img_bytes.content.decode("latin1"),
+                    "features": [{"type": "TEXT_DETECTION"}]
+                }]
+            }
 
-        # Отправляем пользователю результат
+            response = await client.post(ocr_url, headers=headers, json=payload)
+
+        if response.status_code != 200:
+            await bot.send_message(message.chat.id, f"⚠️ Ошибка OCR API: {response.text}")
+            return
+
+        data = response.json()
+        text = data["results"][0]["results"][0]["textDetection"]["pages"][0]["blocks"][0]["lines"][0]["text"]
+
         await bot.send_message(message.chat.id, f"📅 Распознанный текст: {text}")
 
     except Exception as e:
-        logger.error(f"Ошибка при обработке фото: {e}")
+        logger.exception("Ошибка при обработке фото")
         await bot.send_message(message.chat.id, f"⚠️ Ошибка: {e}")
 
-
-# ✅ Вебхук от Telegram
+# ==============================
+# 🔹 Webhook
+# ==============================
 @app.post("/telegram/webhook")
 async def telegram_webhook(request: Request):
     update = Update(**await request.json())
-    Bot.set_current(bot)  # 🔹 фикс контекста
+
+    # 📌 Устанавливаем контекст один раз
+    from aiogram import Bot, Dispatcher
+    Bot.set_current(bot)
     Dispatcher.set_current(dp)
+
     await dp.process_update(update)
     return {"ok": True}
 
-# ✅ Установка вебхука при старте
+# ==============================
+# 🔹 При старте приложения
+# ==============================
 @app.on_event("startup")
 async def on_startup():
-    webhook_url = "https://date-verification.onrender.com/telegram/webhook"
-    await bot.set_webhook(webhook_url)
-    logger.info(f"✅ Webhook установлен: {webhook_url}")
+    await bot.set_webhook(WEBHOOK_URL)
+    logger.info(f"✅ Webhook установлен: {WEBHOOK_URL}")
 
-
-# ✅ Закрытие соединения при завершении
+# ==============================
+# 🔹 При завершении
+# ==============================
 @app.on_event("shutdown")
 async def on_shutdown():
-    session = await bot.get_session()
-    await session.close()
+    await bot.delete_webhook()
+    await bot.session.close()
+    logger.info("❌ Бот остановлен")

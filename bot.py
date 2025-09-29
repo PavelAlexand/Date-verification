@@ -73,32 +73,35 @@ async def yandex_ocr(image_bytes: bytes) -> str:
 # ✅ Обработчик фото
 @dp.message_handler(content_types=["photo"])
 async def photo_handler(message: types.Message):
-    await bot.set_current(bot)  # фикс для контекста
     try:
         photo = message.photo[-1]
         file = await bot.get_file(photo.file_id)
         file_path = file.file_path
 
-        # Скачиваем фото с серверов Telegram
+        # Скачиваем фото напрямую
         async with httpx.AsyncClient() as client:
             file_bytes = await client.get(
                 f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_path}"
             )
+
         text = await yandex_ocr(file_bytes.content)
-        await message.reply(f"📅 Распознанный текст: {text}")
+
+        # Отправляем пользователю результат
+        await bot.send_message(message.chat.id, f"📅 Распознанный текст: {text}")
 
     except Exception as e:
         logger.error(f"Ошибка при обработке фото: {e}")
-        await message.reply("❌ Ошибка при обработке фото")
+        await bot.send_message(message.chat.id, f"⚠️ Ошибка: {e}")
 
 
 # ✅ Вебхук от Telegram
 @app.post("/telegram/webhook")
 async def telegram_webhook(request: Request):
     update = Update(**await request.json())
+    Bot.set_current(bot)  # 🔹 фикс контекста
+    Dispatcher.set_current(dp)
     await dp.process_update(update)
     return {"ok": True}
-
 
 # ✅ Установка вебхука при старте
 @app.on_event("startup")

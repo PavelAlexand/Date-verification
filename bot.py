@@ -86,6 +86,11 @@ def extract_date(text: str) -> str | None:
 
                 return parsed.strftime("%d.%m.%Y")
 
+            except Exception:
+                continue  # если не смогли распарсить — пробуем следующий шаблон
+
+    return None
+
 
 # ---- Хендлер фото ----
 @dp.message_handler(content_types=["photo"])

@@ -46,7 +46,7 @@ async def process_ocr(image_url: str) -> str | None:
                     "features": [
                         {
                             "type": "TEXT_DETECTION",
-                            "textDetectionConfig": {
+                            "text_detection_config": {
                                 "languageCodes": ["ru", "en"]
                             }
                         }

@@ -1,5 +1,5 @@
-aiogram==2.25.1
+aiogram==3.2.0
 fastapi
 uvicorn
 httpx
-pytz
+python-dotenv

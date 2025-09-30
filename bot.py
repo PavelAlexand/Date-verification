@@ -1,63 +1,33 @@
 import os
 import logging
 from fastapi import FastAPI, Request
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.enums import ParseMode
-from aiogram.types import Update
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiohttp import web
 
-# === Логирование ===
+# Логирование
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("bot")
 
-# === Конфигурация ===
+# Токен из переменных окружения
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://date-verification.onrender.com/telegram/webhook")
-
 if not TELEGRAM_TOKEN:
     raise ValueError("❌ TELEGRAM_TOKEN не найден в переменных окружения")
 
+# Настройка бота
 bot = Bot(token=TELEGRAM_TOKEN, parse_mode=ParseMode.HTML)
 dp = Dispatcher()
 
-# === FastAPI ===
+# Создаём FastAPI
 app = FastAPI()
 
-# Health-check (чтобы Render не падал на / и /HEAD)
-@app.get("/")
-async def root():
-    return {"status": "ok", "message": "🤖 Bot is running"}
-
-@app.head("/")
-async def root_head():
-    return {"status": "ok"}
+WEBHOOK_PATH = "/telegram/webhook"
+WEBHOOK_URL = f"https://date-verification.onrender.com{WEBHOOK_PATH}"
 
 
-# === Webhook ===
-@app.on_event("startup")
-async def on_startup():
-    await bot.set_webhook(WEBHOOK_URL)
-    logger.info(f"✅ Webhook установлен: {WEBHOOK_URL}")
+# ========= ОБРАБОТЧИКИ =========
 
-@app.on_event("shutdown")
-async def on_shutdown():
-    logger.info("♻️ Бот выключен")
-    if not bot.session.closed:   # aiogram 3.x — session надо закрывать вручную
-        await bot.session.close()
-
-
-@app.post("/telegram/webhook")
-async def telegram_webhook(request: Request):
-    try:
-        data = await request.json()
-        update = Update.model_validate(data)  # aiogram 3.x
-        await dp.feed_update(bot, update)
-        return {"ok": True}
-    except Exception as e:
-        logger.error(f"Ошибка в webhook: {e}")
-        return {"ok": False}
-
-
-# === Handlers ===
 @dp.message()
 async def handle_message(message: types.Message):
     if message.text:
@@ -66,10 +36,37 @@ async def handle_message(message: types.Message):
         await message.answer("⚠️ Сообщение без текста")
 
 
-@dp.message(content_types=["photo"])
+@dp.message(F.photo)  # ✅ aiogram 3.x
 async def handle_photo(message: types.Message):
     try:
         await message.answer("📷 Фото получено (OCR пока отключён)")
     except Exception as e:
         logger.error(f"Ошибка при обработке фото: {e}")
         await message.answer("⚠️ Ошибка обработки фото")
+
+
+# ========= FASTAPI =========
+
+@app.on_event("startup")
+async def on_startup():
+    await bot.set_webhook(WEBHOOK_URL)
+    logger.info(f"✅ Webhook установлен: {WEBHOOK_URL}")
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    await bot.delete_webhook()
+    await bot.session.close()
+    logger.info("❌ Бот остановлен")
+
+
+@app.post(WEBHOOK_PATH)
+async def telegram_webhook(request: Request):
+    update = types.Update(**await request.json())
+    await dp.feed_update(bot, update)
+    return {"ok": True}
+
+
+@app.get("/")
+async def root():
+    return {"status": "ok", "message": "Бот работает 🚀"}

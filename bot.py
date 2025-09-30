@@ -62,27 +62,26 @@ async def process_ocr(image_url: str) -> str | None:
 
         data = ocr_resp.json()
 
-    texts = []
-    try:
-    annotation = data["results"][0]["results"][0].get("textDetection") \
-                 or data["results"][0]["results"][0].get("textAnnotation")
-    if not annotation:
-        logger.error(f"Не найдено textDetection/textAnnotation в ответе: {data}")
-        return None
+        texts = []
+        try:
+            # Универсальный вариант: textDetection или textAnnotation
+            annotation = data["results"][0]["results"][0].get("textDetection") \
+                         or data["results"][0]["results"][0].get("textAnnotation")
 
-    for page in annotation["pages"]:
-        for block in page["blocks"]:
-            for line in block["lines"]:
-                line_text = " ".join([word["text"] for word in line["words"]])
-                texts.append(line_text)
-    return " ".join(texts)
+            if not annotation:
+                logger.error(f"Не найдено textDetection/textAnnotation в ответе: {data}")
+                return None
 
-except Exception as e:
-    logger.error(f"Ошибка разбора OCR ответа: {e}, ответ: {data}")
-    return None
+            for page in annotation["pages"]:
+                for block in page["blocks"]:
+                    for line in block["lines"]:
+                        line_text = " ".join([word["text"] for word in line["words"]])
+                        texts.append(line_text)
+
             return " ".join(texts)
+
         except Exception as e:
-            logger.error(f"Ошибка парсинга OCR ответа: {e}")
+            logger.error(f"Ошибка разбора OCR ответа: {e}, ответ: {data}")
             return None
 
 # ---------------- Хэндлеры ----------------
@@ -103,10 +102,13 @@ async def handle_photo(message: Message):
 
         # Отправляем в OCR
         text = await process_ocr(file_url)
-await message.answer(f"Распознанный текст:\n{text}")
+
         if not text:
             await message.answer("❌ Не удалось распознать текст на фото")
             return
+
+        # Для отладки — показываем весь распознанный текст
+        await message.answer(f"📝 Распознанный текст:\n{text}")
 
         # Ищем дату в формате 01.01.2025
         match = re.search(r"\d{2}\.\d{2}\.\d{4}", text)
@@ -146,7 +148,7 @@ def main():
     app.on_shutdown.append(on_shutdown)
     return app
 
-# Создаём глобальный app для uvicorn/Render
+# Глобальный app для Render
 app = main()
 
 if __name__ == "__main__":

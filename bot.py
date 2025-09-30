@@ -77,14 +77,19 @@ async def telegram_webhook(request: Request):
         logger.error(f"Ошибка при обработке апдейта: {e}", exc_info=True)
     return {"ok": True}
 
+# Установка вебхука
 @app.on_event("startup")
 async def on_startup():
     webhook_url = os.getenv("WEBHOOK_URL")
-    if webhook_url:
-        await bot.set_webhook(webhook_url + "/telegram/webhook")
-        logger.info(f"✅ Webhook установлен: {webhook_url}/telegram/webhook")
-    else:
-        logger.warning("⚠️ WEBHOOK_URL не задан")
+    if not webhook_url:
+        raise ValueError("❌ WEBHOOK_URL не найден в переменных окружения")
+
+    # проверяем, чтобы путь не задвоился
+    if not webhook_url.endswith("/telegram/webhook"):
+        webhook_url = webhook_url.rstrip("/") + "/telegram/webhook"
+
+    await bot.set_webhook(webhook_url)
+    logger.info(f"✅ Webhook установлен: {webhook_url}")
 
 @app.on_event("shutdown")
 async def on_shutdown():

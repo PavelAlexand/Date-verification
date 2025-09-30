@@ -14,7 +14,7 @@ YANDEX_API_KEY = os.getenv("YANDEX_API_KEY")  # токен для Vision API
 YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID")  # id каталога в Yandex Cloud
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(_name_)
 
 # ==== Telegram Bot ====
 bot = Bot(token=API_TOKEN, parse_mode=ParseMode.HTML)

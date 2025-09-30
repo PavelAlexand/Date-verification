@@ -62,27 +62,27 @@ async def process_ocr(image_url: str) -> str | None:
 
         data = ocr_resp.json()
 
-        texts = []
-        try:
-            # Универсальный вариант: textDetection или textAnnotation
-            annotation = data["results"][0]["results"][0].get("textDetection") \
-                         or data["results"][0]["results"][0].get("textAnnotation")
+    texts = []
+    try:
+     # Универсальный вариант: textDetection или textAnnotation
+      annotation = data["results"][0]["results"][0].get("textDetection") \
+                 or data["results"][0]["results"][0].get("textAnnotation")
 
-            if not annotation:
-                logger.error(f"Не найдено textDetection/textAnnotation в ответе: {data}")
-                return None
+    if not annotation:
+        logger.error(f"Не найдено textDetection/textAnnotation в ответе: {data}")
+        return None
 
-            for page in annotation["pages"]:
-                for block in page["blocks"]:
-                    for line in block["lines"]:
-                        line_text = " ".join([word["text"] for word in line["words"]])
-                        texts.append(line_text)
+    for page in annotation["pages"]:
+        for block in page["blocks"]:
+            for line in block["lines"]:
+                line_text = " ".join([word["text"] for word in line["words"]])
+                texts.append(line_text)
 
-            return " ".join(texts)
+    return " ".join(texts)
 
-        except Exception as e:
-            logger.error(f"Ошибка разбора OCR ответа: {e}, ответ: {data}")
-            return None
+except Exception as e:
+    logger.error(f"Ошибка разбора OCR ответа: {e}, ответ: {data}")
+    return None
 
 # ---------------- Хэндлеры ----------------
 @dp.message(F.text)

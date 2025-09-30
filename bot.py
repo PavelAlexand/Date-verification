@@ -62,8 +62,8 @@ async def process_ocr(image_url: str) -> str | None:
 
         data = ocr_resp.json()
 
-texts = []
-try:
+    texts = []
+    try:
     annotation = data["results"][0]["results"][0].get("textDetection") \
                  or data["results"][0]["results"][0].get("textAnnotation")
     if not annotation:

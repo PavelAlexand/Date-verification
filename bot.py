@@ -74,8 +74,12 @@ async def process_ocr(image_url: str) -> str | None:
 
         texts = []
         try:
-            annotation = data["results"][0]["results"][0].get("textDetection") or \                         data["results"][0]["results"][0].get("textAnnotation")
-
+            annotation = (
+                data["results"][0]["results"]
+            [0].get("textDetection") 
+                or data["results"][0]["results"]
+            [0].get("textAnnotation")
+            )  
             if not annotation:
                 logger.error(f"Не найдено textDetection/textAnnotation в ответе: {data}")
                 return None

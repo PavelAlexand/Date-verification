@@ -44,5 +44,5 @@ def main():
     return app
 
 
-if _name_ == "_main_":
+if _name_ == "__main__":
     web.run_app(main(), host="0.0.0.0", port=int(os.getenv("PORT", 8000)))

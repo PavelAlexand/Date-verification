@@ -62,13 +62,22 @@ async def process_ocr(image_url: str) -> str | None:
 
         data = ocr_resp.json()
 
-        try:
-            texts = []
-            for page in data["results"][0]["results"][0]["textDetection"]["pages"]:
-                for block in page["blocks"]:
-                    for line in block["lines"]:
-                        line_text = " ".join([word["text"] for word in line["words"]])
-                        texts.append(line_text)
+       texts = []
+try:
+    annotation = data["results"][0]["results"][0].get("textDetection") \
+                 or data["results"][0]["results"][0].get("textAnnotation")
+    if not annotation:
+        logger.error(f"Не найдено textDetection/textAnnotation в ответе: {data}")
+        return None
+
+    for page in annotation["pages"]:
+        for block in page["blocks"]:
+            for line in block["lines"]:
+                line_text = " ".join([word["text"] for word in line["words"]])
+                texts.append(line_text)
+except Exception as e:
+    logger.error(f"Ошибка разбора OCR ответа: {e}, ответ: {data}")
+    return None
             return " ".join(texts)
         except Exception as e:
             logger.error(f"Ошибка парсинга OCR ответа: {e}")
@@ -92,7 +101,7 @@ async def handle_photo(message: Message):
 
         # Отправляем в OCR
         text = await process_ocr(file_url)
-
+await message.answer(f"Распознанный текст:\n{text}")
         if not text:
             await message.answer("❌ Не удалось распознать текст на фото")
             return

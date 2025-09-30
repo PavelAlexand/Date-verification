@@ -1,17 +1,17 @@
 import os
 import logging
-import httpx
 from fastapi import FastAPI, Request
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import Update
-from aiogram.utils.executor import Executor
-from io import BytesIO
+from aiogram.utils.executor import set_webhook
+import httpx
+import io
 
-# ------------------ ЛОГИ ------------------
+# ================== НАСТРОЙКА ЛОГОВ ==================
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("bot")
 
-# ------------------ ПЕРЕМЕННЫЕ ------------------
+# ================== НАСТРОЙКА ПЕРЕМЕННЫХ ==================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 YANDEX_OCR_API_KEY = os.getenv("YANDEX_OCR_API_KEY")
 
@@ -20,82 +20,72 @@ if not TELEGRAM_TOKEN:
 if not YANDEX_OCR_API_KEY:
     raise ValueError("❌ YANDEX_OCR_API_KEY не найден в переменных окружения")
 
-bot = Bot(token=TELEGRAM_TOKEN)
+WEBHOOK_PATH = "/telegram/webhook"
+WEBHOOK_URL = f"https://date-verification.onrender.com{WEBHOOK_PATH}"
+
+# ================== ИНИЦИАЛИЗАЦИЯ ==================
+bot = Bot(token=TELEGRAM_TOKEN, parse_mode="HTML")
 dp = Dispatcher(bot)
+app = FastAPI()
 
-# ------------------ OCR ------------------
-async def recognize_text(image_bytes: bytes) -> str:
-    url = "https://vision.api.cloud.yandex.net/vision/v1/batchAnalyze"
-    headers = {"Authorization": f"Api-Key {YANDEX_OCR_API_KEY}"}
-    data = {
-        "folderId": os.getenv("YANDEX_FOLDER_ID"),
-        "analyze_specs": [{
-            "content": image_bytes.decode("latin1"),
-            "features": [{"type": "TEXT_DETECTION"}]
-        }]
-    }
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(url, headers=headers, json=data)
-        resp.raise_for_status()
-        result = resp.json()
-        try:
-            text = "\n".join([b["text"] for p in result["results"][0]["results"][0]["textDetection"]["pages"]
-                              for b in p["blocks"]])
-        except Exception:
-            text = "⚠️ Не удалось распознать текст"
-    return text
-
-# ------------------ HANDLERS ------------------
+# ================== ОБРАБОТЧИК ФОТО ==================
 @dp.message_handler(content_types=["photo"])
 async def photo_handler(message: types.Message):
     try:
+        bot.set_current(bot)  # фикс контекста
+
         photo = message.photo[-1]
-        bio = BytesIO()
+        bio = io.BytesIO()
         await photo.download(destination_file=bio)
         bio.seek(0)
 
-        text = await recognize_text(bio.getvalue())
-        await message.answer(f"📅 Распознанный текст:\n{text}")
+        # Отправка фото в Yandex Vision
+        files = {"file": bio}
+        headers = {"Authorization": f"Api-Key {YANDEX_OCR_API_KEY}"}
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://vision.api.cloud.yandex.net/vision/v1/batchAnalyze",
+                headers=headers,
+                files=files,
+            )
+
+        if response.status_code != 200:
+            await message.reply(f"⚠️ Ошибка OCR API: {response.text}")
+            return
+
+        result = response.json()
+        logger.info(f"📄 Ответ от Yandex Vision: {result}")
+
+        try:
+            text = result["results"][0]["results"][0]["textDetection"]["pages"][0]["blocks"][0]["lines"][0]["words"][0]["text"]
+        except Exception:
+            text = "❌ Дата не распознана"
+
+        await message.reply(f"📅 Распознанный текст: {text}")
 
     except Exception as e:
-        logger.error(f"Ошибка при обработке фото: {e}", exc_info=True)
+        logger.error("Ошибка при обработке фото", exc_info=True)
         await message.answer(f"⚠️ Ошибка: {e}")
 
-# ------------------ FASTAPI ------------------
-app = FastAPI()
-
-@app.get("/")
-async def root():
-    return {"status": "ok", "message": "bot is running"}
-
-@app.post("/telegram/webhook")
-async def telegram_webhook(request: Request):
-    try:
-        update = Update(**await request.json())
-        await dp.process_update(update)
-    except Exception as e:
-        logger.error(f"Ошибка при обработке апдейта: {e}", exc_info=True)
-    return {"ok": True}
-
-# Установка вебхука
+# ================== ВЕБХУК ==================
 @app.on_event("startup")
 async def on_startup():
-    webhook_url = os.getenv("WEBHOOK_URL")
-    if not webhook_url:
-        raise ValueError("❌ WEBHOOK_URL не найден в переменных окружения")
-
-    # проверяем, чтобы путь не задвоился
-    if not webhook_url.endswith("/telegram/webhook"):
-        webhook_url = webhook_url.rstrip("/") + "/telegram/webhook"
-
-    await bot.set_webhook(webhook_url)
-    logger.info(f"✅ Webhook установлен: {webhook_url}")
+    await set_webhook(bot=bot, dispatcher=dp, url=WEBHOOK_URL)
+    logger.info(f"✅ Webhook установлен: {WEBHOOK_URL}")
 
 @app.on_event("shutdown")
 async def on_shutdown():
-    # Закрытие сессии
-    try:
-        await bot.get_session().close()
-    except Exception:
-        pass
+    session = await bot.get_session()
+    await session.close()
     logger.info("❌ Бот остановлен")
+
+@app.post(WEBHOOK_PATH)
+async def telegram_webhook(request: Request):
+    update = Update(**await request.json())
+    await dp.process_update(update)
+    return {"ok": True}
+
+@app.get("/")
+async def root():
+    return {"status": "ok"}

@@ -64,26 +64,25 @@ async def recognize_text(image_bytes: bytes) -> str:
 @dp.message_handler(content_types=["photo"])
 async def photo_handler(message: types.Message):
     try:
-        bot.set_current(bot)  # фикс контекста
+        # Берём последнее фото
         photo = message.photo[-1]
-        bio = BytesIO()
-        await photo.download(destination_file=bio)
-        bio.seek(0)
 
-        text = await recognize_text(bio.getvalue())
-        await message.reply(f"📅 Распознанный текст: {text}")
+        # Получаем файл через bot
+        file_info = await bot.get_file(photo.file_id)
+        file_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_info.file_path}"
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(file_url)
+            image_bytes = response.content
+
+        # Отправляем в OCR
+        text = await recognize_text(image_bytes)
+
+        await bot.send_message(message.chat.id, f"📅 Распознанный текст: {text}")
 
     except Exception as e:
         logger.error(f"Ошибка при обработке фото: {e}", exc_info=True)
-        await message.reply(f"⚠️ Ошибка: {e}")
-
-
-@app.post("/telegram/webhook")
-async def telegram_webhook(request: Request):
-    data = await request.json()
-    update = Update(**data)
-    await dp.process_update(update)
-    return {"ok": True}
+        await bot.send_message(message.chat.id, f"⚠️ Ошибка: {e}")
 
 
 @app.on_event("startup")

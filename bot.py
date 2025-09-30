@@ -18,6 +18,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://date-verification.onrender.com/telegram/webhook")
 YANDEX_API_KEY = os.getenv("YANDEX_OCR_API_KEY")
 YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID")
+CHAT_ID = os.getenv("CHAT_ID")  # вручную прописывается после /start
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -47,7 +48,7 @@ async def process_ocr(image_url: str) -> str | None:
                         {
                             "type": "TEXT_DETECTION",
                             "text_detection_config": {
-                                "languageCodes": ["ru", "en"]
+                                "language_codes": ["ru", "en"]
                             }
                         }
                     ]
@@ -73,18 +74,21 @@ async def process_ocr(image_url: str) -> str | None:
 
         texts = []
         try:
-            # Универсальный вариант: textDetection или textAnnotation
-            annotation = data["results"][0]["results"][0].get("textDetection") or                          data["results"][0]["results"][0].get("textAnnotation")
+            annotation = data["results"][0]["results"][0].get("textDetection") or \                         data["results"][0]["results"][0].get("textAnnotation")
 
             if not annotation:
                 logger.error(f"Не найдено textDetection/textAnnotation в ответе: {data}")
                 return None
 
-            for page in annotation["pages"]:
-                for block in page["blocks"]:
-                    for line in block["lines"]:
-                        line_text = " ".join([word["text"] for word in line["words"]])
+            for page in annotation.get("pages", []):
+                for block in page.get("blocks", []):
+                    for line in block.get("lines", []):
+                        line_text = " ".join([word["text"] for word in line.get("words", [])])
                         texts.append(line_text)
+
+            if not texts:
+                logger.warning(f"OCR не нашёл текст: {data}")
+                return None
 
             return " ".join(texts)
 
@@ -93,10 +97,17 @@ async def process_ocr(image_url: str) -> str | None:
             return None
 
 # ---------------- Хэндлеры ----------------
+@dp.message(F.text == "/start")
+async def cmd_start(message: Message):
+    """
+    Команда /start — показывает chat_id и регистрирует пользователя
+    """
+    await message.answer("✅ Бот запущен. Буду напоминать присылать фото каждые 2 часа.")
+    logger.info(f"Chat ID для напоминаний: {message.chat.id}")
+
 @dp.message(F.text)
 async def echo_handler(message: Message):
     await message.answer(f"Ты написал: {message.text}")
-
 
 @dp.message(F.photo)
 async def handle_photo(message: Message):
@@ -139,6 +150,17 @@ async def handle_photo(message: Message):
         logger.error(f"Ошибка обработки фото: {e}")
         await message.answer("⚠️ Произошла ошибка при обработке фото")
 
+# ---------------- Напоминание ----------------
+async def remind_handler(request):
+    """
+    Эндпоинт для напоминания — дергается cron-job.org каждые 2 часа
+    """
+    if CHAT_ID:
+        await bot.send_message(CHAT_ID, "⏰ Пора загрузить фото банки для проверки!")
+        return web.Response(text="Reminder sent")
+    else:
+        return web.Response(text="CHAT_ID not set", status=400)
+
 # ---------------- Запуск приложения ----------------
 async def on_startup(app: web.Application):
     await bot.set_webhook(WEBHOOK_URL)
@@ -152,6 +174,7 @@ async def on_shutdown(app: web.Application):
 def main():
     app = web.Application()
     SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path="/telegram/webhook")
+    app.router.add_get("/remind_photo", remind_handler)  # эндпоинт для напоминаний
     app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)
     return app

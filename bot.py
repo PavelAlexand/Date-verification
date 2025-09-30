@@ -42,8 +42,12 @@ async def process_ocr(image_url: str) -> str | None:
             "folderId": YANDEX_FOLDER_ID,
             "analyze_specs": [{
                 "content": img_data,
-                "features": [{"type": "TEXT_DETECTION"}]
-            }]
+              "features": [{
+                  "type": "TEXT_DETECTION",
+                  "textDetectionConfig": {
+                      "languageCodes": ["ru", "en"]  # поддерживаем русский и английский
+    }
+}]
         }
 
         headers = {

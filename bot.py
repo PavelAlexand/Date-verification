@@ -40,14 +40,19 @@ async def process_ocr(image_url: str) -> str | None:
 
         body = {
             "folderId": YANDEX_FOLDER_ID,
-            "analyze_specs": [{
-                "content": img_data,
-              "features": [{
-                  "type": "TEXT_DETECTION",
-                  "textDetectionConfig": {
-                      "languageCodes": ["ru", "en"]  # поддерживаем русский и английский
-    }
-}]
+            "analyze_specs": [
+                {
+                    "content": img_data,
+                    "features": [
+                        {
+                            "type": "TEXT_DETECTION",
+                            "textDetectionConfig": {
+                                "languageCodes": ["ru", "en"]
+                            }
+                        }
+                    ]
+                }
+            ]
         }
 
         headers = {
@@ -69,8 +74,7 @@ async def process_ocr(image_url: str) -> str | None:
         texts = []
         try:
             # Универсальный вариант: textDetection или textAnnotation
-            annotation = data["results"][0]["results"][0].get("textDetection") \
-                         or data["results"][0]["results"][0].get("textAnnotation")
+            annotation = data["results"][0]["results"][0].get("textDetection") or                          data["results"][0]["results"][0].get("textAnnotation")
 
             if not annotation:
                 logger.error(f"Не найдено textDetection/textAnnotation в ответе: {data}")

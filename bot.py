@@ -143,7 +143,19 @@ async def handle_photo(message: Message):
             await message.answer("❌ Дата не найдена в тексте")
             return
 
-        prod_date = datetime.datetime.strptime(date_str, "%d.%m.%Y").date()
+        # Пробуем несколько форматов даты
+        prod_date = None
+        for fmt in ("%d.%m.%Y", "%d.%m.%y", "%d/%m/%Y", "%d/%m/%y"):
+            try:
+                prod_date = datetime.datetime.strptime(date_str, fmt).date()
+                break
+            except ValueError:
+                continue
+
+        if not prod_date:
+            await message.answer(f"⚠️ Не удалось разобрать дату: {date_str}")
+            return
+
         today = datetime.date.today()
 
         if prod_date == today:

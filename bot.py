@@ -51,7 +51,7 @@ async def process_ocr(image_url: str) -> str | None:
         }
 
         ocr_resp = await client.post(
-            "https://ocr.api.cloud.yandex.net/vision/v1/batchAnalyze",
+            "https://vision.api.cloud.yandex.net/vision/v1/batchAnalyze",
             headers=headers,
             json=body
         )

@@ -18,7 +18,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://date-verification.onrender.com/telegram/webhook")
 YANDEX_API_KEY = os.getenv("YANDEX_OCR_API_KEY")
 YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID")
-CHAT_ID = os.getenv("CHAT_ID")  # вручную прописывается после /start
+CHAT_ID = os.getenv("CHAT_ID")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -32,7 +32,6 @@ async def process_ocr(image_url: str) -> str | None:
     Отправляем фото в Yandex OCR и возвращаем распознанный текст
     """
     async with httpx.AsyncClient() as client:
-        # Скачиваем картинку из Telegram
         resp = await client.get(image_url)
         if resp.status_code != 200:
             return None
@@ -48,7 +47,8 @@ async def process_ocr(image_url: str) -> str | None:
                         {
                             "type": "TEXT_DETECTION",
                             "text_detection_config": {
-                                "language_codes": ["ru", "en"]
+                                "language_codes": ["*"],
+                                "model": "page"
                             }
                         }
                     ]
@@ -75,11 +75,10 @@ async def process_ocr(image_url: str) -> str | None:
         texts = []
         try:
             annotation = (
-                data["results"][0]["results"]
-            [0].get("textDetection") 
-                or data["results"][0]["results"]
-            [0].get("textAnnotation")
-            )  
+                data["results"][0]["results"][0].get("textDetection")
+                or data["results"][0]["results"][0].get("textAnnotation")
+            )
+
             if not annotation:
                 logger.error(f"Не найдено textDetection/textAnnotation в ответе: {data}")
                 return None
@@ -103,43 +102,47 @@ async def process_ocr(image_url: str) -> str | None:
 # ---------------- Хэндлеры ----------------
 @dp.message(F.text == "/start")
 async def cmd_start(message: Message):
-    """
-    Команда /start — показывает chat_id и регистрирует пользователя
-    """
     await message.answer("✅ Бот запущен. Буду напоминать присылать фото каждые 2 часа.")
     logger.info(f"Chat ID для напоминаний: {message.chat.id}")
 
-@dp.message(F.text)
-async def echo_handler(message: Message):
-    await message.answer(f"Ты написал: {message.text}")
-
 @dp.message(F.photo)
 async def handle_photo(message: Message):
-    """
-    Обработка фото: скачивание, отправка в OCR и проверка даты
-    """
     try:
-        # Получаем файл от Telegram
         file = await bot.get_file(message.photo[-1].file_id)
         file_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file.file_path}"
 
-        # Отправляем в OCR
         text = await process_ocr(file_url)
 
         if not text:
             await message.answer("❌ Не удалось распознать текст на фото")
             return
 
-        # Для отладки — показываем весь распознанный текст
         await message.answer(f"📝 Распознанный текст:\n{text}")
 
-        # Ищем дату в формате 01.01.2025
-        match = re.search(r"\d{2}\.\d{2}\.\d{4}", text)
-        if not match:
+        # Расширенный поиск даты
+        patterns = [
+            r"\d{2}\.\d{2}\.\d{4}",  # 16.07.2025
+            r"\d{2}\.\d{2}\.\d{2}",  # 16.07.25
+            r"\d{2}/\d{2}/\d{2,4}",    # 16/07/25 или 16/07/2025
+            r"\d{6}"                     # 160725
+        ]
+
+        date_str = None
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if match:
+                raw = match.group()
+                if len(raw) == 6 and raw.isdigit():
+                    # Преобразуем 160725 → 16.07.2025
+                    date_str = f"{raw[0:2]}.{raw[2:4]}.20{raw[4:6]}"
+                else:
+                    date_str = raw
+                break
+
+        if not date_str:
             await message.answer("❌ Дата не найдена в тексте")
             return
 
-        date_str = match.group()
         prod_date = datetime.datetime.strptime(date_str, "%d.%m.%Y").date()
         today = datetime.date.today()
 
@@ -156,16 +159,13 @@ async def handle_photo(message: Message):
 
 # ---------------- Напоминание ----------------
 async def remind_handler(request):
-    """
-    Эндпоинт для напоминания — дергается cron-job.org каждые 2 часа
-    """
     if CHAT_ID:
         await bot.send_message(CHAT_ID, "⏰ Пора загрузить фото банки для проверки!")
         return web.Response(text="Reminder sent")
     else:
         return web.Response(text="CHAT_ID not set", status=400)
 
-# ---------------- Запуск приложения ----------------
+# ---------------- Запуск ----------------
 async def on_startup(app: web.Application):
     await bot.set_webhook(WEBHOOK_URL)
     logger.info(f"✅ Webhook установлен: {WEBHOOK_URL}")
@@ -178,12 +178,11 @@ async def on_shutdown(app: web.Application):
 def main():
     app = web.Application()
     SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path="/telegram/webhook")
-    app.router.add_get("/remind_photo", remind_handler)  # эндпоинт для напоминаний
+    app.router.add_get("/remind_photo", remind_handler)
     app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)
     return app
 
-# Глобальный app для Render
 app = main()
 
 if __name__ == "__main__":

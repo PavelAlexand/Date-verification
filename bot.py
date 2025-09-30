@@ -2,56 +2,37 @@ import os
 import logging
 from fastapi import FastAPI, Request
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.enums import ParseMode
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
-from aiohttp import web
+
+# --- Настройки ---
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+WEBHOOK_URL = f"https://date-verification.onrender.com/telegram/webhook"
 
 # Логирование
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("bot")
 
-# Токен из переменных окружения
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-if not TELEGRAM_TOKEN:
-    raise ValueError("❌ TELEGRAM_TOKEN не найден в переменных окружения")
-
-# Настройка бота
-bot = Bot(token=TELEGRAM_TOKEN, parse_mode=ParseMode.HTML)
+# Инициализация
+bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()
 
-# Создаём FastAPI
+# --- Хэндлер для фото ---
+@dp.message(F.photo)
+async def photo_handler(message: types.Message):
+    await message.reply("✅ Фото получено! Но пока обрабатываем только текст 😉")
+
+# --- Хэндлер для текста ---
+@dp.message(F.text)
+async def text_handler(message: types.Message):
+    await message.reply(f"Ты написал: {message.text}")
+
+# --- FastAPI ---
 app = FastAPI()
-
-WEBHOOK_PATH = "/telegram/webhook"
-WEBHOOK_URL = f"https://date-verification.onrender.com{WEBHOOK_PATH}"
-
-
-# ========= ОБРАБОТЧИКИ =========
-
-@dp.message()
-async def handle_message(message: types.Message):
-    if message.text:
-        await message.answer(f"Ты написал: <b>{message.text}</b>")
-    else:
-        await message.answer("⚠️ Сообщение без текста")
-
-
-@dp.message(F.photo)  # ✅ aiogram 3.x
-async def handle_photo(message: types.Message):
-    try:
-        await message.answer("📷 Фото получено (OCR пока отключён)")
-    except Exception as e:
-        logger.error(f"Ошибка при обработке фото: {e}")
-        await message.answer("⚠️ Ошибка обработки фото")
-
-
-# ========= FASTAPI =========
 
 @app.on_event("startup")
 async def on_startup():
     await bot.set_webhook(WEBHOOK_URL)
     logger.info(f"✅ Webhook установлен: {WEBHOOK_URL}")
-
 
 @app.on_event("shutdown")
 async def on_shutdown():
@@ -59,14 +40,10 @@ async def on_shutdown():
     await bot.session.close()
     logger.info("❌ Бот остановлен")
 
-
-@app.post(WEBHOOK_PATH)
-async def telegram_webhook(request: Request):
-    update = types.Update(**await request.json())
-    await dp.feed_update(bot, update)
-    return {"ok": True}
-
-
 @app.get("/")
 async def root():
-    return {"status": "ok", "message": "Бот работает 🚀"}
+    return {"status": "ok", "message": "Бот работает!"}
+
+# Подключаем aiogram к FastAPI
+SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path="/telegram/webhook")
+setup_application(app, dp, bot=bot)

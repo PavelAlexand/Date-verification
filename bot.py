@@ -3,109 +3,89 @@ import logging
 import base64
 import httpx
 from fastapi import FastAPI, Request
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import Update
+from aiogram import Bot, Dispatcher, F
+from aiogram.types import Message, Update
 from aiogram.enums import ParseMode
 
-# 🔹 Логирование
+# ==== Конфиг ====
+API_TOKEN = os.getenv("BOT_TOKEN")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://date-verification.onrender.com/telegram/webhook")
+YANDEX_API_KEY = os.getenv("YANDEX_API_KEY")  # токен для Vision API
+YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID")  # id каталога в Yandex Cloud
+
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("bot")
+logger = logging.getLogger(_name_)
 
-# 🔹 Токены из переменных окружения
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-YANDEX_OCR_API_KEY = os.getenv("YANDEX_OCR_API_KEY")
+# ==== Telegram Bot ====
+bot = Bot(token=API_TOKEN, parse_mode=ParseMode.HTML)
+dp = Dispatcher()
 
-if not TELEGRAM_TOKEN:
-    raise ValueError("❌ TELEGRAM_TOKEN не найден в переменных окружения")
-if not YANDEX_OCR_API_KEY:
-    raise ValueError("❌ YANDEX_OCR_API_KEY не найден в переменных окружения")
-
-# 🔹 Основные объекты
-bot = Bot(token=TELEGRAM_TOKEN, parse_mode=ParseMode.HTML)
-dp = Dispatcher(bot=bot)
 app = FastAPI()
 
-# 🔹 Webhook URL
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://date-verification.onrender.com/telegram/webhook")
 
-
-# ---------- OCR через Яндекс ----------
-async def ocr_image(image_bytes: bytes) -> str:
-    url = "https://vision.api.cloud.yandex.net/vision/v1/batchAnalyze"
-    encoded_image = base64.b64encode(image_bytes).decode("utf-8")
-
-    headers = {
-        "Authorization": f"Api-Key {YANDEX_OCR_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    payload = {
-        "folderId": os.getenv("YANDEX_FOLDER_ID", ""),  # если не задан, пусто
-        "analyze_specs": [{
-            "content": encoded_image,
-            "features": [{"type": "TEXT_DETECTION"}]
-        }]
-    }
-
-    async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.post(url, headers=headers, json=payload)
-
-    if response.status_code != 200:
-        logger.error(f"Яндекс Vision ошибка {response.status_code}: {response.text}")
-        return "⚠️ Ошибка OCR (не удалось распознать изображение)"
-
+# ==== Обработчик фото ====
+@dp.message(F.photo)
+async def photo_handler(message: Message):
     try:
-        data = response.json()
-        text = " ".join([block["text"] for block in data["results"][0]["results"][0]["textDetection"]["pages"][0]["blocks"]])
-        return text if text else "⚠️ Текст не найден"
-    except Exception as e:
-        logger.error(f"Ошибка разбора OCR: {e}")
-        return "⚠️ Ошибка обработки ответа OCR"
-
-
-# ---------- Хэндлер для фото ----------
-@dp.message_handler(content_types=["photo"])
-async def photo_handler(message: types.Message):
-    try:
-        Bot.set_current(bot)  # фикс контекста
+        # Берём лучшее качество фото
         photo = message.photo[-1]
         file = await bot.get_file(photo.file_id)
-        file_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file.file_path}"
+        file_url = f"https://api.telegram.org/file/bot{API_TOKEN}/{file.file_path}"
 
-        async with httpx.AsyncClient(timeout=30) as client:
+        # Скачиваем фото
+        async with httpx.AsyncClient() as client:
             resp = await client.get(file_url)
-            img_bytes = resp.content
+            resp.raise_for_status()
+            image_bytes = resp.content
 
-        text = await ocr_image(img_bytes)
+        # Кодируем в base64
+        image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+        # Отправляем в Yandex Vision
+        vision_url = "https://vision.api.cloud.yandex.net/vision/v1/batchAnalyze"
+        headers = {"Authorization": f"Api-Key {YANDEX_API_KEY}"}
+        body = {
+            "folderId": YANDEX_FOLDER_ID,
+            "analyze_specs": [{
+                "content": image_b64,
+                "features": [{"type": "TEXT_DETECTION"}]
+            }]
+        }
+
+        async with httpx.AsyncClient() as client:
+            vision_resp = await client.post(vision_url, headers=headers, json=body)
+            vision_resp.raise_for_status()
+            result = vision_resp.json()
+
+        # Достаём текст
+        text = ""
+        try:
+            pages = result["results"][0]["results"][0]["textDetection"]["pages"]
+            for page in pages:
+                for block in page["blocks"]:
+                    for line in block["lines"]:
+                        line_text = " ".join([word["text"] for word in line["words"]])
+                        text += line_text + "\n"
+        except Exception:
+            text = "❌ Текст не найден"
+
         await message.answer(f"📄 Распознанный текст:\n\n{text}")
 
     except Exception as e:
-        logger.error(f"Ошибка при обработке фото: {e}")
-        await message.answer("⚠️ Не удалось обработать фото")
+        logger.error(f"Ошибка при обработке фото: {e}", exc_info=True)
+        await message.answer("⚠️ Ошибка при обработке фото")
 
 
-# ---------- FastAPI endpoints ----------
-@app.on_event("startup")
-async def on_startup():
-    webhook_url = WEBHOOK_URL
-    await bot.set_webhook(webhook_url)
-    logger.info(f"✅ Webhook установлен: {webhook_url}")
-
-
-@app.on_event("shutdown")
-async def on_shutdown():
-    await bot.delete_webhook()
-    await bot.session.close()
-    logger.info("❌ Бот остановлен")
-
-
+# ==== Webhook ====
 @app.post("/telegram/webhook")
 async def telegram_webhook(request: Request):
-    try:
-        data = await request.json()
-        update = Update(**data)
-        await dp.process_update(update)
-        return {"ok": True}
-    except Exception as e:
-        logger.error(f"Ошибка при обработке апдейта: {e}")
-        return {"ok": False}
+    data = await request.json()
+    update = Update.model_validate(data)
+    await dp.feed_update(bot, update)
+    return {"ok": True}
+
+
+# ==== Тестовый GET ====
+@app.get("/")
+async def home():
+    return {"status": "ok", "message": "Бот работает 🚀"}

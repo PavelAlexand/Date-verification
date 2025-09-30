@@ -8,7 +8,7 @@ from aiogram.types import Message, Update
 from aiogram.enums import ParseMode
 
 # ==== Конфиг ====
-API_TOKEN = os.getenv("BOT_TOKEN")
+API_TOKEN = os.getenv("TELEGRAM_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://date-verification.onrender.com/telegram/webhook")
 YANDEX_API_KEY = os.getenv("YANDEX_API_KEY")  # токен для Vision API
 YANDEX_FOLDER_ID = os.getenv("YANDEX_FOLDER_ID")  # id каталога в Yandex Cloud
